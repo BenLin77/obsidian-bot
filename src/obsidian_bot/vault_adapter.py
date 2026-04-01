@@ -242,8 +242,11 @@ def _build_entry(
 ) -> NoteIndexEntry:
     data, body = load_frontmatter(note_path)
     msg_match = _MSG_ID_RE.search(note_path.name)
-    telegram_chat_id = int(msg_match.group(1)) if msg_match else None
-    telegram_message_id = int(msg_match.group(2)) if msg_match else None
+    telegram_chat_id = _normalize_optional_int(data.get("telegram_chat_id"))
+    telegram_message_id = _normalize_optional_int(data.get("telegram_message_id"))
+    if telegram_chat_id is None or telegram_message_id is None:
+        telegram_chat_id = int(msg_match.group(1)) if msg_match else None
+        telegram_message_id = int(msg_match.group(2)) if msg_match else None
     title = str(data.get("title", "")).strip() or note_path.stem
     tags = _normalize_iterable(data.get("tags"))
     aliases = _normalize_iterable(data.get("aliases"))
@@ -279,6 +282,20 @@ def _normalize_optional_text(raw_value: object) -> str | None:
         return None
     cleaned = raw_value.strip()
     return cleaned or None
+
+
+def _normalize_optional_int(raw_value: object) -> int | None:
+    if isinstance(raw_value, bool):
+        return None
+    if isinstance(raw_value, int):
+        return raw_value
+    if isinstance(raw_value, float) and raw_value.is_integer():
+        return int(raw_value)
+    if isinstance(raw_value, str):
+        cleaned = raw_value.strip()
+        if cleaned.isdigit():
+            return int(cleaned)
+    return None
 
 
 def _normalize_iterable(raw_value: object) -> tuple[str, ...]:

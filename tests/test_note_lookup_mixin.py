@@ -104,8 +104,19 @@ def test_note_lookup_mixin_falls_back_to_file_scan_when_vault_missing(
     tmp_path: Path,
 ) -> None:
     settings = make_settings(tmp_path)
-    expected_message_path = settings.inbox_path / "scan-message-t1m2.md"
-    expected_message_path.write_text("message body\n", encoding="utf-8")
+    expected_message_path = settings.inbox_path / "scan-message.md"
+    expected_message_path.write_text(
+        dump_frontmatter(
+            {
+                "title": "Message",
+                "telegram_chat_id": 1,
+                "telegram_message_id": 2,
+                "tags": ["inbox"],
+            },
+            "message body\n",
+        ),
+        encoding="utf-8",
+    )
     expected_canonical_path = settings.inbox_path / "scan-canonical-t9m9.md"
     expected_canonical_path.write_text(
         dump_frontmatter(
@@ -127,4 +138,15 @@ def test_note_lookup_mixin_falls_back_to_file_scan_when_vault_missing(
     assert (
         host._find_existing_note_by_canonical_url("https://example.com/post")
         == expected_canonical_path
+    )
+
+
+def test_note_lookup_mixin_still_matches_legacy_suffix_notes(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    legacy_note_path = settings.inbox_path / "legacy-message-t1m2.md"
+    legacy_note_path.write_text("legacy body\n", encoding="utf-8")
+    host = LookupHost(settings)
+
+    assert (
+        host._find_existing_note_by_message(chat_id=1, message_id=2) == legacy_note_path
     )

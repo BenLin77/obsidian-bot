@@ -224,6 +224,12 @@ def find_existing_note_by_message(
 ) -> Path | None:
     suffix = f"-t{chat_id}m{message_id}.md"
     for note_path in vault_path.rglob("*.md"):
+        data, _ = load_frontmatter(note_path)
+        if (
+            data.get("telegram_chat_id") == chat_id
+            and data.get("telegram_message_id") == message_id
+        ):
+            return note_path
         if note_path.name.endswith(suffix):
             return note_path
     return None
