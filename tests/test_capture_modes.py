@@ -94,7 +94,7 @@ def test_prepare_article_capture_appends_image_section(tmp_path: Path) -> None:
     assert "![[attachments/20260326/example.jpg]]" in prepared.body
 
 
-def test_prepare_topic_capture_links_related_notes(tmp_path: Path) -> None:
+def test_prepare_topic_capture_omits_related_notes_section(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
     vault = VaultAdapter(settings)
     related_note = settings.common_path / "銀行資訊.md"
@@ -114,5 +114,5 @@ def test_prepare_topic_capture_links_related_notes(tmp_path: Path) -> None:
         now=datetime.fromisoformat("2026-03-26T09:00:00+08:00"),
     )
 
-    assert "## 相關筆記" in prepared.body
-    assert "[[常用/銀行資訊]]" in prepared.body
+    assert "## 相關筆記" not in prepared.body
+    assert "[[常用/銀行資訊]]" not in prepared.body

@@ -23,7 +23,6 @@ _MODE_TAGS: dict[CaptureMode, tuple[str, ...]] = {
     "article": ("capture", "capture-article"),
     "topic": ("capture", "capture-topic"),
 }
-_WIKI_SUFFIX_RE = re.compile(r"\.md$", re.IGNORECASE)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？.!?])\s+|\n+")
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -54,8 +53,6 @@ def prepare_capture(
     _ = now or datetime.now(ZoneInfo(settings.timezone))
     title = (source_title or _infer_title(text)).strip() or capture_mode_label(mode)
     cleaned_text = text.strip()
-    related_links = _related_links(vault, query=title, limit=3)
-
     if mode == "thought":
         body = _build_thought_body(
             title=title,
@@ -75,7 +72,6 @@ def prepare_capture(
             title=title,
             text=cleaned_text,
             source_url=source_url,
-            related_links=related_links,
             image_embeds=image_embeds,
         )
 
@@ -139,7 +135,6 @@ def _build_topic_body(
     title: str,
     text: str,
     source_url: str | None,
-    related_links: tuple[str, ...],
     image_embeds: tuple[str, ...],
 ) -> str:
     summary = _summary_sentence(text)
@@ -156,9 +151,6 @@ def _build_topic_body(
         lines.extend([f"- {item}" for item in key_points])
     else:
         lines.append("- 待補核心線索")
-    if related_links:
-        lines.extend(["", "## 相關筆記"])
-        lines.extend([f"- {item}" for item in related_links])
     if source_url:
         lines.extend(["", "## 來源", f"- {source_url}"])
     _append_image_section(lines, image_embeds)
@@ -208,18 +200,3 @@ def _key_points(text: str, *, max_items: int) -> tuple[str, ...]:
 
 def _split_sentences(text: str) -> tuple[str, ...]:
     return tuple(chunk for chunk in _SENTENCE_SPLIT_RE.split(text) if chunk.strip())
-
-
-def _related_links(
-    vault: "VaultAdapter | None", *, query: str, limit: int
-) -> tuple[str, ...]:
-    if vault is None or not query.strip():
-        return ()
-    results = vault.search(query, limit=limit)
-    links: list[str] = []
-    for result in results:
-        wikilink = _WIKI_SUFFIX_RE.sub("", result.relative_path)
-        if not wikilink or wikilink in links:
-            continue
-        links.append(f"[[{wikilink}]]")
-    return tuple(links[:limit])
