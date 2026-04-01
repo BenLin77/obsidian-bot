@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html as html_lib
 import logging
 import mimetypes
 import re
@@ -52,6 +53,20 @@ _LEADING_TIMESTAMP_PATTERNS = (
     re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?(?:\s?[APMapm]{2})?$"),
 )
 _IMAGE_SOURCE_ATTRS = ("src", "data-src", "data-original", "data-lazy-src")
+_CONTENT_CONTAINER_XPATHS = ("//main", "//article", "//section", "//div", "//body")
+_DROP_FALLBACK_TAGS = {
+    "script",
+    "style",
+    "noscript",
+    "iframe",
+    "svg",
+    "form",
+    "nav",
+    "footer",
+    "header",
+    "aside",
+    "button",
+}
 
 
 @dataclass(frozen=True)
@@ -177,25 +192,34 @@ class URLExtractor(NoteLookupMixin):
             if "text/html" not in content_type:
                 return None
 
-            html = response.text
-            doc = Document(html)
+            raw_html = response.text
+            doc = Document(raw_html)
             title = doc.title()
             summary_html = doc.summary()
+            fallback_html = self._extract_fallback_content_html(raw_html)
 
-            # Readability often strips <img>/<figure> from its summary.
-            # Extract images from the *raw* HTML article body first,
-            # then fall back to the summary if it already contains images.
-            raw_image_urls = self._collect_article_image_urls(html, page_url=url)
-
-            image_embeds, cleaned_summary_html = await self._extract_image_embeds(
-                client=client,
+            content_html = summary_html
+            extraction_method = "readability"
+            if self._should_use_fallback_content(
+                raw_html=raw_html,
                 summary_html=summary_html,
+                fallback_html=fallback_html,
+            ):
+                content_html = fallback_html
+                extraction_method = "body-fallback"
+                logger.info("Using body fallback extractor for %s", url)
+
+            raw_image_urls = self._collect_article_image_urls(raw_html, page_url=url)
+
+            image_embeds, cleaned_content_html = await self._extract_image_embeds(
+                client=client,
+                summary_html=content_html,
                 page_url=url,
                 extra_image_urls=raw_image_urls,
             )
 
             content = markdownify(
-                cleaned_summary_html,
+                cleaned_content_html,
                 heading_style="ATX",
                 strip=["script", "style"],
             )
@@ -205,6 +229,7 @@ class URLExtractor(NoteLookupMixin):
                 "title": title,
                 "content": content,
                 "image_embeds": image_embeds,
+                "extraction_method": extraction_method,
             }
 
     def _save_article(
@@ -223,13 +248,12 @@ class URLExtractor(NoteLookupMixin):
             safe_title = domain
 
         slug = re.sub(r"\s+", "-", safe_title)
-        message_suffix = f"-t{metadata.telegram_chat_id}m{metadata.telegram_message_id}"
-        filename = f"{slug}{message_suffix}.md"
+        filename = f"{slug}.md"
         note_relative = Path(self._settings.inbox_dir) / filename
         note_absolute = self._settings.vault_path / note_relative
         counter = 1
         while note_absolute.exists():
-            filename = f"{slug}-{counter}{message_suffix}.md"
+            filename = f"{slug}-{counter}.md"
             note_relative = Path(self._settings.inbox_dir) / filename
             note_absolute = self._settings.vault_path / note_relative
             counter += 1
@@ -238,6 +262,8 @@ class URLExtractor(NoteLookupMixin):
             "title": title,
             "source_url": metadata.source_url or url,
             "tags": default_tags(metadata),
+            "telegram_chat_id": metadata.telegram_chat_id,
+            "telegram_message_id": metadata.telegram_message_id,
         }
 
         body = "\n".join(
@@ -403,6 +429,151 @@ class URLExtractor(NoteLookupMixin):
         parent = image.getparent()
         if parent is not None:
             parent.remove(image)
+
+    def _extract_fallback_content_html(self, raw_html: str) -> str:
+        try:
+            tree = lxml_html.fromstring(raw_html)
+        except (ParserError, Exception):
+            return ""
+
+        candidates: list[tuple[int, object]] = []
+        seen: set[int] = set()
+        for xpath in _CONTENT_CONTAINER_XPATHS:
+            for node in tree.xpath(xpath):
+                node_id = id(node)
+                if node_id in seen:
+                    continue
+                seen.add(node_id)
+                score = self._score_content_candidate(node)
+                if score <= 0:
+                    continue
+                candidates.append((score, node))
+
+        if not candidates:
+            return ""
+
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        best_node = candidates[0][1]
+        cleaned_fragment = lxml_html.fromstring(
+            lxml_html.tostring(best_node, encoding="unicode")
+        )
+        self._prepare_fallback_fragment(cleaned_fragment)
+        return lxml_html.tostring(cleaned_fragment, encoding="unicode")
+
+    def _score_content_candidate(self, node) -> int:
+        text_length = len(self._normalized_text(node.text_content()))
+        if text_length < 20:
+            return 0
+
+        classes = self._class_tokens(node)
+        score = text_length
+        score += 140 * len(node.xpath(".//h1 | .//h2 | .//h3"))
+        score += 80 * len(node.xpath(".//p"))
+        score += 60 * len(node.xpath(".//li"))
+        score += 180 * len(node.xpath(".//table"))
+        score += 120 * len(node.xpath(".//code | .//pre"))
+        score += 90 * len(
+            [child for child in node.iter() if "card" in self._class_tokens(child)]
+        )
+        score += 120 * len(
+            [child for child in node.iter() if "prompt" in self._class_tokens(child)]
+        )
+        if getattr(node, "tag", None) in {"main", "article", "section"}:
+            score += 1200
+        if "container" in classes:
+            score += 800
+        if classes & {"header", "footer", "nav", "menu", "sidebar", "cookie"}:
+            score -= 2000
+        return score
+
+    def _prepare_fallback_fragment(self, fragment) -> None:
+        for node in list(fragment.iter()):
+            if node is fragment:
+                continue
+            if getattr(node, "tag", None) in _DROP_FALLBACK_TAGS:
+                self._remove_node(node)
+                continue
+            classes = self._class_tokens(node)
+            if classes & {"cookie", "share", "social", "phase-num", "copy"}:
+                self._remove_node(node)
+
+        for prompt in list(fragment.iter()):
+            if prompt is fragment:
+                continue
+            if "prompt" not in self._class_tokens(prompt):
+                continue
+            code_text = self._normalized_text(prompt.text_content())
+            if not code_text:
+                self._remove_node(prompt)
+                continue
+            replacement = lxml_html.fragment_fromstring(
+                f"<pre><code>{html_lib.escape(code_text)}</code></pre>"
+            )
+            parent = prompt.getparent()
+            if parent is not None:
+                parent.replace(prompt, replacement)
+
+    def _should_use_fallback_content(
+        self, *, raw_html: str, summary_html: str, fallback_html: str
+    ) -> bool:
+        if not fallback_html.strip():
+            return False
+
+        summary_text_len, summary_code_count = self._content_metrics(summary_html)
+        fallback_text_len, fallback_code_count = self._content_metrics(fallback_html)
+        raw_code_count = raw_html.count("<code") + raw_html.count("<pre")
+        raw_prompt_count = raw_html.count('class="prompt"') + raw_html.count(
+            "class='prompt'"
+        )
+
+        if summary_text_len == 0 and fallback_text_len > 0:
+            return True
+        if (
+            raw_code_count + raw_prompt_count >= 4
+            and summary_code_count == 0
+            and fallback_code_count > 0
+        ):
+            return True
+        if fallback_text_len >= 1000 and summary_text_len < int(
+            fallback_text_len * 0.4
+        ):
+            return True
+        if fallback_text_len >= 600 and summary_text_len < 280:
+            return True
+        return False
+
+    def _content_metrics(self, html_fragment: str) -> tuple[int, int]:
+        if not html_fragment.strip():
+            return 0, 0
+        try:
+            fragment = lxml_html.fragment_fromstring(html_fragment, create_parent="div")
+        except (ParserError, Exception):
+            return 0, 0
+        text_length = len(self._normalized_text(fragment.text_content()))
+        code_count = len(fragment.xpath(".//code")) + len(fragment.xpath(".//pre"))
+        return text_length, code_count
+
+    def _class_tokens(self, node) -> set[str]:
+        raw = str(node.attrib.get("class", "")).strip()
+        if not raw:
+            return set()
+        return {token.casefold() for token in raw.split() if token.strip()}
+
+    def _normalized_text(self, value: str) -> str:
+        return re.sub(r"\s+", " ", value).strip()
+
+    def _remove_node(self, node) -> None:
+        parent = node.getparent()
+        if parent is None:
+            return
+        tail = node.tail or ""
+        previous = node.getprevious()
+        if tail:
+            if previous is not None:
+                previous.tail = (previous.tail or "") + tail
+            else:
+                parent.text = (parent.text or "") + tail
+        parent.remove(node)
 
     def _sanitize_extracted_content(self, content: str) -> str:
         cleaned = re.sub(r"\n{3,}", "\n\n", content).strip()
