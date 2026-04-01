@@ -171,13 +171,12 @@ class MediaHandler(NoteLookupMixin):
         if not slug:
             slug = f"{media_type}-{now.strftime('%Y%m%d-%H%M%S')}"
 
-        message_suffix = f"-t{metadata.telegram_chat_id}m{metadata.telegram_message_id}"
-        filename = f"{slug}{message_suffix}.md"
+        filename = f"{slug}.md"
         note_relative = Path(self._settings.inbox_dir) / filename
         note_absolute = self._settings.vault_path / note_relative
         counter = 1
         while note_absolute.exists():
-            filename = f"{slug}-{counter}{message_suffix}.md"
+            filename = f"{slug}-{counter}.md"
             note_relative = Path(self._settings.inbox_dir) / filename
             note_absolute = self._settings.vault_path / note_relative
             counter += 1
@@ -191,6 +190,8 @@ class MediaHandler(NoteLookupMixin):
             "title": title,
             "source_url": metadata.source_url or metadata.canonical_url,
             "tags": default_tags(metadata),
+            "telegram_chat_id": metadata.telegram_chat_id,
+            "telegram_message_id": metadata.telegram_message_id,
         }
 
         body_lines = [embed, ""]

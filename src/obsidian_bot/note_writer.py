@@ -98,8 +98,6 @@ class NoteWriter(NoteLookupMixin):
         filename = self._unique_filename(
             title=title,
             now=now,
-            chat_id=metadata.telegram_chat_id,
-            message_id=metadata.telegram_message_id,
         )
         relative_path = Path(self._settings.inbox_dir) / filename
         absolute_path = self._settings.vault_path / relative_path
@@ -108,6 +106,8 @@ class NoteWriter(NoteLookupMixin):
             "title": title,
             "source_url": metadata.source_url or metadata.canonical_url,
             "tags": default_tags(metadata),
+            "telegram_chat_id": metadata.telegram_chat_id,
+            "telegram_message_id": metadata.telegram_message_id,
         }
 
         body = body_override if body_override is not None else text.strip() + "\n"
@@ -132,23 +132,20 @@ class NoteWriter(NoteLookupMixin):
         *,
         title: str,
         now: datetime,
-        chat_id: int,
-        message_id: int,
     ) -> str:
         base = _SLUG_RE.sub("-", title).strip("-_")
         if not base:
             base = f"{self._settings.note_prefix}-{now.strftime('%Y%m%d-%H%M%S')}"
         base = re.sub(r"-{2,}", "-", base)
 
-        message_suffix = f"-t{chat_id}m{message_id}"
-        candidate = f"{base}{message_suffix}.md"
+        candidate = f"{base}.md"
         path = self._settings.inbox_path / candidate
         if not path.exists():
             return candidate
 
         counter = 1
         while True:
-            candidate = f"{base}-{counter}{message_suffix}.md"
+            candidate = f"{base}-{counter}.md"
             path = self._settings.inbox_path / candidate
             if not path.exists():
                 return candidate

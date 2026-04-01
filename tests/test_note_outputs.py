@@ -99,7 +99,15 @@ def test_capture_text_writes_simplified_frontmatter(tmp_path: Path) -> None:
     assert frontmatter["title"] == "hello world"
     assert frontmatter["source_url"] is None
     assert frontmatter["tags"] == ["inbox"]
-    assert set(frontmatter) == {"title", "source_url", "tags"}
+    assert frontmatter["telegram_chat_id"] == 1
+    assert frontmatter["telegram_message_id"] == 2
+    assert set(frontmatter) == {
+        "title",
+        "source_url",
+        "tags",
+        "telegram_chat_id",
+        "telegram_message_id",
+    }
 
 
 def test_capture_text_dedupes_same_telegram_message(tmp_path: Path) -> None:
@@ -120,24 +128,20 @@ def test_capture_text_filename_has_no_timestamp_prefix(tmp_path: Path) -> None:
 
     note = writer.capture_text(text="hello world", metadata=make_metadata())
 
-    assert note.relative_path.name == "hello-world-t1m2.md"
+    assert note.relative_path.name == "hello-world.md"
 
 
 def test_capture_text_filename_dedup_appends_counter(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
     writer = NoteWriter(settings)
-    (settings.inbox_path / "hello-world-t1m2.md").write_text(
-        "existing", encoding="utf-8"
-    )
+    (settings.inbox_path / "hello-world.md").write_text("existing", encoding="utf-8")
 
     filename = writer._unique_filename(
         title="hello world",
         now=datetime(2026, 3, 26, 9, 30),
-        chat_id=1,
-        message_id=2,
     )
 
-    assert filename == "hello-world-1-t1m2.md"
+    assert filename == "hello-world-1.md"
 
 
 def test_vault_adapter_indexes_message_and_source_url(tmp_path: Path) -> None:
@@ -209,11 +213,19 @@ def test_url_clip_writes_simplified_frontmatter(tmp_path: Path) -> None:
     )
 
     frontmatter, _ = load_frontmatter(note_path)
-    assert note_path.name == "Example-t1m2.md"
+    assert note_path.name == "Example.md"
     assert frontmatter["title"] == "Example"
     assert frontmatter["source_url"] == metadata.source_url
     assert frontmatter["tags"] == ["inbox"]
-    assert set(frontmatter) == {"title", "source_url", "tags"}
+    assert frontmatter["telegram_chat_id"] == 1
+    assert frontmatter["telegram_message_id"] == 2
+    assert set(frontmatter) == {
+        "title",
+        "source_url",
+        "tags",
+        "telegram_chat_id",
+        "telegram_message_id",
+    }
 
 
 def test_url_clip_filename_dedup_appends_counter(tmp_path: Path) -> None:
@@ -228,7 +240,7 @@ def test_url_clip_filename_dedup_appends_counter(tmp_path: Path) -> None:
         source_domain="example.com",
         extraction_quality="full",
     )
-    (settings.inbox_path / "Example-t1m2.md").write_text("existing", encoding="utf-8")
+    (settings.inbox_path / "Example.md").write_text("existing", encoding="utf-8")
 
     note_path, _ = extractor._save_article(
         title="Example",
@@ -237,7 +249,7 @@ def test_url_clip_filename_dedup_appends_counter(tmp_path: Path) -> None:
         metadata=metadata,
     )
 
-    assert note_path.name == "Example-1-t1m2.md"
+    assert note_path.name == "Example-1.md"
 
 
 def test_media_note_writes_source_url_metadata(tmp_path: Path) -> None:
@@ -261,17 +273,25 @@ def test_media_note_writes_source_url_metadata(tmp_path: Path) -> None:
     )
 
     frontmatter, _ = load_frontmatter(note_path)
-    assert note_path.name == "caption-t1m2.md"
+    assert note_path.name == "caption.md"
     assert frontmatter["title"] == "caption"
     assert frontmatter["source_url"] == "https://threads.net/@demo/post/1"
     assert frontmatter["tags"] == ["inbox"]
-    assert set(frontmatter) == {"title", "source_url", "tags"}
+    assert frontmatter["telegram_chat_id"] == 1
+    assert frontmatter["telegram_message_id"] == 2
+    assert set(frontmatter) == {
+        "title",
+        "source_url",
+        "tags",
+        "telegram_chat_id",
+        "telegram_message_id",
+    }
 
 
 def test_media_note_filename_dedup_appends_counter(tmp_path: Path) -> None:
     settings = make_settings(tmp_path)
     media = MediaHandler(settings)
-    (settings.inbox_path / "caption-t1m2.md").write_text("existing", encoding="utf-8")
+    (settings.inbox_path / "caption.md").write_text("existing", encoding="utf-8")
 
     note_path, _ = media._create_media_note(
         media_relative_path=Path("attachments/20260326/file.jpg"),
@@ -281,7 +301,7 @@ def test_media_note_filename_dedup_appends_counter(tmp_path: Path) -> None:
         metadata=make_metadata(),
     )
 
-    assert note_path.name == "caption-1-t1m2.md"
+    assert note_path.name == "caption-1.md"
 
 
 def test_url_clip_writes_downloaded_image_section(tmp_path: Path) -> None:
